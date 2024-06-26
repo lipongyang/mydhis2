@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sex Distribution</title>
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <!-- DataTables CSS and JS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <!-- SheetJS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.5/xlsx.full.min.js"></script>
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- jsPDF Autotable -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.21/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        .loading-spinner {
+            display: none;
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .spinner-border {
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container p-5 pb-0">
+        <select id="periodSelect" class="border-none bg-light rounded-1 p-2 text-slate-50">
+            <option value="" disabled selected>Select a period</option>
+            <option value="THIS_MONTH">THIS_MONTH</option>
+            <option value="LAST_MONTH">LAST_MONTH</option>
+            <option value="202401;202402;202403;202404;202405">Jan-May</option>
+            <option value="LAST_3_MONTHS">LAST_3_MONTHS</option>
+            <option value="LAST_12_MONTHS">LAST_12_MONTHS</option>
+            <option value="THIS_QUARTER">THIS_QUARTER</option>
+            <option value="QUARTERS_THIS_YEAR">QUARTERS_THIS_YEAR</option>
+        </select>
+        <button id="generateReport" class="bg-primary text-light rounded-3 border text-slate-50 p-2 rounded-sm">Generate Report</button>
+        <button id="downloadExcel" class="bg-success text-light rounded-3 border text-slate-50 p-2 rounded-sm">Download Excel</button>
+        <button id="downloadPDF" class="bg-danger text-light rounded-3 border text-slate-50 p-2 rounded-sm">Download PDF</button>
+    </div>
+    <div class="loading-spinner">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <div>Loading data, please wait...</div>
+    </div>
+    <div class="container p-5">
+        <table id="reportTable" class="border-collapse border border-black table table-hover table-bordered text text-center">
+            <thead>
+                <tr>
+                    <td rowspan="2" class="align-middle bg-info p-1">Province</td>
+                    <td colspan="2" class="bg-info">HepB</td>
+                    <td colspan="2" class="bg-info">Penta 3</td>
+                    <td colspan="2" class="bg-info">Mr 1</td>
+                </tr>
+                <tr>
+                    <td class="bg-info-subtle">Male</td>
+                    <td class="bg-info-subtle">Female</td>
+                    <td class="bg-info-subtle">Male</td>
+                    <td class="bg-info-subtle">Female</td>
+                    <td class="bg-info-subtle">Male</td>
+                    <td class="bg-info-subtle">Female</td>
+                </tr>
+            </thead>
+            <tbody id="data-body">
+            </tbody>
+        </table>
+    </div>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            let dataMap = {};
+            let dataTable;
+
+            const metrics = [
+                { name: 'HepB', code: 'O8drIFUt4j8' },
+                { name: 'Penta3', code: 'Ln2xC7zuEpr' },
+                { name: 'MR1', code: 'EdCjK8sy4WH' },
+            ];
+
+            document.getElementById("generateReport").addEventListener("click", function () {
+                dataMap = {}; // Clear dataMap for new report generation
+                const selectedPeriod = document.getElementById("periodSelect").value;
+                if (selectedPeriod) {
+                    showLoading();
+                    const promises = metrics.map(metric => fetchData(metric, selectedPeriod));
+
+                    Promise.all(promises).then(() => {
+                        hideLoading();
+                        renderTable();
+                        initializeDataTable(); // Initialize DataTable after rendering the table
+                    }).catch(err => {
+                        hideLoading();
+                        console.log("Failed to fetch all data: ", err);
+                    });
+
+                } else {
+                    alert("Please select a period.");
+                }
+            });
+
+            $("#downloadExcel").on("click", function () {
+                downloadExcel();
+            });
+
+            $("#downloadPDF").on("click", function () {
+                downloadPDF();
+            });
+
+            const fetchData = (metric, selectedPeriod) => {
+                return $.ajax({
+                    method: 'GET',
+                    url: `https://laos-his.gov.la/dhis/api/29/analytics/events/query/Yj9cJ34AXw6.json?dimension=pe:${selectedPeriod}&dimension=ou:IWp9dQGM0bS&dimension=r8bZppSsIvR&dimension=oVwa5LfjnvA&dimension=DmuazFb368B:IN:F;M&dimension=hCTTxOH8FOa.${metric.code}:IN:1&stage=hCTTxOH8FOa&displayProperty=NAME&outputType=EVENT&desc=eventdate&paging=false`,
+                    headers: {
+                        Authorization: "Basic " + btoa("Lipongyang:Lipong@1999")
+                    }
+                }).done(response => {
+                    response.rows.forEach(data => {
+                        const province = data[13];
+                        const sex = data[15];
+                        const value = parseInt(data[16]);
+                        const metricName = metric.name;
+
+                        if (!dataMap[province]) {
+                            dataMap[province] = {
+                                HepB: { M: 0, F: 0 },
+                                Penta3: { M: 0, F: 0 },
+                                MR1: { M: 0, F: 0 }
+                            };
+                        }
+
+                        dataMap[province][metricName][sex] += value;
+                    });
+                }).fail(err => {
+                    console.log("Something is wrong: ", err);
+                });
+            };
+
+            function renderTable() {
+                const $tbody = $("#data-body");
+                $tbody.empty();
+
+                const sortedProvinces = Object.keys(dataMap).sort((a, b) => {
+                    const aPrefix = parseInt(a.split(' ')[0]);
+                    const bPrefix = parseInt(b.split(' ')[0]);
+                    return aPrefix - bPrefix;
+                });
+
+                let totalMaleHepB = 0,
+                    totalFemaleHepB = 0,
+                    totalMalePenta3 = 0,
+                    totalFemalePenta3 = 0,
+                    totalMaleMR1 = 0,
+                    totalFemaleMR1 = 0;
+
+                sortedProvinces.forEach(province => {
+                    const data = dataMap[province];
+                    $tbody.append(`
+                        <tr>
+                            <td class="bg-info text-start">${province}</td>
+                            <td>${data.HepB.M}</td>
+                            <td>${data.HepB.F}</td>
+                            <td>${data.Penta3.M}</td>
+                            <td>${data.Penta3.F}</td>
+                            <td>${data.MR1.M}</td>
+                            <td>${data.MR1.F}</td>
+                        </tr>
+                    `);
+
+                    // Calculate totals
+                    totalMaleHepB += data.HepB.M;
+                    totalFemaleHepB += data.HepB.F;
+                    totalMalePenta3 += data.Penta3.M;
+                    totalFemalePenta3 += data.Penta3.F;
+                    totalMaleMR1 += data.MR1.M;
+                    totalFemaleMR1 += data.MR1.F;
+                });
+
+                // Append Total row
+                $tbody.append(`
+                    <tr class="bg-secondary text-light">
+                        <td class="bg-info text-start">Total</td>
+                        <td>${totalMaleHepB}</td>
+                        <td>${totalFemaleHepB}</td>
+                        <td>${totalMalePenta3}</td>
+                        <td>${totalFemalePenta3}</td>
+                        <td>${totalMaleMR1}</td>
+                        <td>${totalFemaleMR1}</td>
+                    </tr>
+                    <tr class="bg-secondary text-light">
+                        <td class="bg-info text-middle align-middle" rowspan=2>Grand Total</td>
+                        <td colspan="3">Male</td>
+                        <td colspan="3">Female</td>
+                    </tr>
+                    <tr class="bg-secondary text-light">
+                        <td colspan="3">${totalMaleHepB + totalMalePenta3 + totalMaleMR1}</td>
+                        <td colspan="3">${totalFemaleHepB + totalFemalePenta3 + totalFemaleMR1}</td>
+                    </tr>
+                `);
+            }
+
+            function initializeDataTable() {
+                if ($.fn.DataTable.isDataTable('#reportTable')) {
+                    $('#reportTable').DataTable().destroy();
+                }
+                $('#reportTable').DataTable();
+            }
+
+            function downloadExcel() {
+                const ws_data = [['Province', 'HepB Male', 'HepB Female', 'Penta3 Male', 'Penta3 Female', 'MR1 Male', 'MR1 Female']];
+                const sortedProvinces = Object.keys(dataMap).sort((a, b) => {
+                    const aPrefix = parseInt(a.split(' ')[0]);
+                    const bPrefix = parseInt(b.split(' ')[0]);
+                    return aPrefix - bPrefix;
+                });
+
+                sortedProvinces.forEach(province => {
+                    const data = dataMap[province];
+                    ws_data.push([
+                        province,
+                        data.HepB.M,
+                        data.HepB.F,
+                        data.Penta3.M,
+                        data.Penta3.F,
+                        data.MR1.M,
+                        data.MR1.F
+                    ]);
+                });
+
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                XLSX.utils.book_append_sheet(wb, ws, 'Report');
+                XLSX.writeFile(wb, 'Sex_Distribution_Provincial.xlsx');
+            }
+
+            function downloadPDF() {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+
+                const sortedProvinces = Object.keys(dataMap).sort((a, b) => {
+                    const aPrefix = parseInt(a.split(' ')[0]);
+                    const bPrefix = parseInt(b.split(' ')[0]);
+                    return aPrefix - bPrefix;
+                });
+
+                const data = sortedProvinces.map(province => {
+                    const rowData = dataMap[province];
+                    return [
+                        province,
+                        rowData.HepB.M,
+                        rowData.HepB.F,
+                        rowData.Penta3.M,
+                        rowData.Penta3.F,
+                        rowData.MR1.M,
+                        rowData.MR1.F
+                    ];
+                });
+
+                doc.autoTable({
+                    head: [['Province', 'HepB Male', 'HepB Female', 'Penta3 Male', 'Penta3 Female', 'MR1 Male', 'MR1 Female']],
+                    body: data
+                });
+
+                doc.save('Sex_Distribution_Provincial.pdf');
+            }
+
+            function showLoading() {
+                document.querySelector('.loading-spinner').style.display = 'block';
+            }
+
+            function hideLoading() {
+                document.querySelector('.loading-spinner').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+
+</html>
